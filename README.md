@@ -1,6 +1,6 @@
 # CommitGremlin
 
-I got tired of my GitHub graph being a graveyard because all my real work lives in private repos or never touches GitHub at all. CommitGremlin watches your dev folders, tracks how long you actually worked, and pushes one commit a day to a public activity repo. Green squares, honest numbers, zero exposure of your actual code.
+Most of the work I do isn't on Github because I sometimes touch grass or have a girlfriend (she's goes to a different school you don't know her shut up). All I know is I'm tired of my Github looking dead but I really don't like the idea of blank commits..SO~ CommitGremlin watches your dev folders, tracks how long you actually worked, and pushes one commit a day to a public activity repo. Green squares go brrrrrr
 
 ---
 
@@ -113,7 +113,7 @@ commit-gremlin build -n 3
 # Check cumulative stats
 commit-gremlin stats
 
-# Force a commit right now (good for testing your setup)
+# Force a commit
 commit-gremlin commit
 ```
 
