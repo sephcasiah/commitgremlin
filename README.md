@@ -1,4 +1,4 @@
-# CommitGremlin 🟩
+# CommitGremlin
 
 I got tired of my GitHub graph being a graveyard because all my real work lives in private repos or never touches GitHub at all. CommitGremlin watches your dev folders, tracks how long you actually worked, and pushes one commit a day to a public activity repo. Green squares, honest numbers, zero exposure of your actual code.
 
