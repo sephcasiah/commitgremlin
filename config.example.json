@@ -1,0 +1,17 @@
+{
+  "_comment": "Paths can be absolute or relative to this config file.",
+  "watch_folders": [
+    "C:/dev/MyProject1",
+    "C:/dev/MyProject2"
+  ],
+  "activity_repo": "C:/dev/github-activity-repo",
+  "commit_hour": 23,
+  "session_timeout_seconds": 1800,
+  "ignored_patterns": [
+    "*.pyc",
+    "__pycache__",
+    ".git",
+    "node_modules",
+    "*.log"
+  ]
+}

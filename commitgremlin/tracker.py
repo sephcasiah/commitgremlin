@@ -1,0 +1,230 @@
+"""
+Core daemon: watches configured folders, tracks cumulative active time,
+and pushes a daily commit to the activity repo.
+"""
+
+import datetime
+import subprocess
+import time
+from pathlib import Path
+
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
+
+from .utils import load_config, resolve, read_json, write_json
+
+_cfg = load_config()
+
+WATCH_FOLDERS: list = _cfg["watch_folders"]
+ACTIVITY_REPO: Path = resolve(_cfg["ACTIVITY_REPO"])
+COMMIT_HOUR: int = _cfg.get("commit_hour", 23)
+IGNORED: list = _cfg.get("ignored_patterns", [])
+SESSION_TIMEOUT_SECONDS: int = _cfg.get("session_timeout_seconds", 1800)  # 30 min default
+
+DATA_DIR: Path = resolve("data")
+LOG_DIR: Path = DATA_DIR / "logs"
+STATS_FILE: Path = DATA_DIR / "stats.json"
+
+class ActivityState:
+    """Holds all tracked data for a single calendar day."""
+
+    def __init__(self):
+        self.date = datetime.date.today().isoformat()
+        self.files_modified = set()
+        self.projects = set()
+        self.builds = 0
+
+        # Active-time session tracking
+        self._session_start = None
+        self._last_event = None
+        self._accumulated_seconds = 0
+
+    def record_event(self):
+        """Call on any file-system activity to advance the active-time clock."""
+        now = time.monotonic()
+
+        if self._session_start is None:
+            # First event of the day — open a new session.
+            self._session_start = now
+            self._last_event = now
+            return
+
+        gap = now - self._last_event
+        if gap > SESSION_TIMEOUT_SECONDS:
+            # Gap too long — close the old session and open a fresh one.
+            self._accumulated_seconds += int(self._last_event - self._session_start)
+            self._session_start = now
+
+        self._last_event = now
+
+    def close_session(self):
+        """Flush any open session into the accumulated total."""
+        if self._session_start is not None and self._last_event is not None:
+            self._accumulated_seconds += int(self._last_event - self._session_start)
+            self._session_start = None
+            self._last_event = None
+
+    @property
+    def active_seconds(self):
+        return self._accumulated_seconds
+
+    @property
+    def active_time_str(self):
+        total = self._accumulated_seconds
+        h, rem = divmod(total, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h}h {m:02d}m {s:02d}s"
+
+    def sync_builds(self):
+        """Pull the build count written by build_hook so tracker stays in sync."""
+        build_file = DATA_DIR / "builds.json"
+        data = read_json(build_file)
+        self.builds = data.get("builds", 0)
+
+    def to_dict(self):
+        return {
+            "date": self.date,
+            "files_modified": sorted(self.files_modified),
+            "projects": sorted(self.projects),
+            "builds": self.builds,
+            "active_seconds": self.active_seconds,
+            "active_time": self.active_time_str,
+        }
+
+
+activity = ActivityState()
+
+class ChangeHandler(FileSystemEventHandler):
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+        src = Path(event.src_path)
+        if any(src.match(pat) for pat in IGNORED):
+            return
+
+        abs_path = str(src.resolve())
+        activity.files_modified.add(abs_path)
+        activity.record_event()
+
+        for folder in WATCH_FOLDERS:
+            if abs_path.startswith(str(resolve(folder))):
+                activity.projects.add(Path(folder).name)
+
+
+def start_watchers():
+    observer = Observer()
+    for folder in WATCH_FOLDERS:
+        resolved = resolve(folder)
+        if resolved.exists():
+            observer.schedule(ChangeHandler(), path=str(resolved), recursive=True)
+        else:
+            print(f"[CommitGremlin] Warning: watch folder does not exist: {resolved}")
+    observer.start()
+    return observer
+
+def save_log():
+    activity.close_session()
+    activity.sync_builds()
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    write_json(LOG_DIR / f"{activity.date}.json", activity.to_dict())
+    _save_log_md()
+    _update_stats()
+    _update_readme()
+
+
+def _save_log_md():
+    path = LOG_DIR / f"{activity.date}.md"
+    lines = [
+        f"# CommitGremlin — {activity.date}\n\n",
+        f"**Active time:** {activity.active_time_str}  \n",
+        f"**Projects:** {', '.join(sorted(activity.projects)) or '—'}  \n",
+        f"**Builds:** {activity.builds}  \n",
+        f"**Files modified:** {len(activity.files_modified)}  \n\n",
+    ]
+    if activity.files_modified:
+        lines.append("## Changed files\n\n")
+        lines += [f"- `{f}`\n" for f in sorted(activity.files_modified)]
+    path.write_text("".join(lines), encoding="utf-8")
+
+
+def _update_stats():
+    stats = read_json(STATS_FILE)
+    stats.setdefault("total_days_logged", 0)
+    stats.setdefault("total_files_modified", 0)
+    stats.setdefault("total_builds", 0)
+    stats.setdefault("total_active_seconds", 0)
+
+    stats["total_days_logged"] += 1
+    stats["total_files_modified"] += len(activity.files_modified)
+    stats["total_builds"] += activity.builds
+    stats["total_active_seconds"] += activity.active_seconds
+
+    write_json(STATS_FILE, stats)
+
+
+def _update_readme():
+    stats = read_json(STATS_FILE)
+
+    total_secs = stats.get("total_active_seconds", 0)
+    th, tr = divmod(total_secs, 3600)
+    tm = tr // 60
+    total_active_str = f"{th}h {tm:02d}m"
+
+    lines = [
+        "# CommitGremlin activity\n\n",
+        "> Auto-generated by [CommitGremlin](https://github.com/sephcasiah/commitgremlin) "
+        "— a dev activity tracker (honest green square machine).\n\n",
+        "## Today\n\n",
+        "| Metric | Value |\n",
+        "|--------|-------|\n",
+        f"| Date | {activity.date} |\n",
+        f"| Active time | {activity.active_time_str} |\n",
+        f"| Files modified | {len(activity.files_modified)} |\n",
+        f"| Builds | {activity.builds} |\n",
+        f"| Projects | {', '.join(sorted(activity.projects)) or '—'} |\n\n",
+        "## All time\n\n",
+        "| Metric | Value |\n",
+        "|--------|-------|\n",
+        f"| Days logged | {stats.get('total_days_logged', 0)} |\n",
+        f"| Total active time | {total_active_str} |\n",
+        f"| Total files modified | {stats.get('total_files_modified', 0)} |\n",
+        f"| Total builds | {stats.get('total_builds', 0)} |\n",
+    ]
+
+    readme_path = ACTIVITY_REPO / "README.md"
+    readme_path.parent.mkdir(parents=True, exist_ok=True)
+    readme_path.write_text("".join(lines), encoding="utf-8")
+
+def commit_activity():
+    repo = str(ACTIVITY_REPO)
+    subprocess.run(["git", "-C", repo, "add", "."], check=True)
+    msg = (
+        f"activity {activity.date} | "
+        f"active: {activity.active_time_str} | "
+        f"files: {len(activity.files_modified)} | "
+        f"builds: {activity.builds}"
+    )
+    result = subprocess.run(["git", "-C", repo, "commit", "-m", msg])
+    if result.returncode == 0:
+        subprocess.run(["git", "-C", repo, "push"], check=True)
+    else:
+        print("[CommitGremlin] Nothing to commit today.")
+
+def main():
+    observer = start_watchers()
+    print(f"[CommitGremlin] Watching {len(WATCH_FOLDERS)} folder(s). Commit at {COMMIT_HOUR:02d}:00.")
+    try:
+        while True:
+            now = datetime.datetime.now()
+            if now.hour == COMMIT_HOUR and now.minute == 0:
+                save_log()
+                commit_activity()
+                time.sleep(3600)  # skip the rest of this hour
+            time.sleep(30)
+    except KeyboardInterrupt:
+        print("\n[CommitGremlin] Shutting down...")
+    finally:
+        observer.stop()
+        observer.join()

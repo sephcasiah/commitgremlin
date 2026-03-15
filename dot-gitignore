@@ -1,0 +1,17 @@
+data/
+config.json
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.vscode/
+.idea/
+*.suo

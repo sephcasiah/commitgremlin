@@ -1,0 +1,22 @@
+[project]
+name = "commitgremlin"
+version = "0.1.0"
+description = "A daemon that tracks dev activity and pushes daily commits to GitHub."
+author = [{name = "Sephcasiah", email = "sephcasiah@gmail.com"}]
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+
+dependencies = [
+    "watchdog>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+commit-gremlin = "commitgremlin.cli:main"
+
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
