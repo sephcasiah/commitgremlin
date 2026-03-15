@@ -2,6 +2,8 @@
 
 Most of the work I do isn't on Github because I sometimes touch grass or have a girlfriend (she's goes to a different school you don't know her shut up). All I know is I'm tired of my Github looking dead but I really don't like the idea of blank commits..SO~ CommitGremlin watches your dev folders, tracks how long you actually worked, and pushes one commit a day to a public activity repo. Green squares go brrrrrr
 
+ETA: Now that I think about it, you could point this at your profile readme instead of creating a new repo. I will eventually add a little bling to the reeadme if/when I can get to it~ seph
+
 ---
 
 ## What it does
