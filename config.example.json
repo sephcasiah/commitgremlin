@@ -4,7 +4,7 @@
     "C:/dev/MyProject1",
     "C:/dev/MyProject2"
   ],
-  "activity_repo": "C:/dev/github-activity-repo",
+  "ACTIVITY_REPO": "C:/dev/github-activity-repo",
   "commit_hour": 23,
   "session_timeout_seconds": 1800,
   "ignored_patterns": [
