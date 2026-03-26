@@ -8,12 +8,12 @@ from pathlib import Path
 
 
 def _find_config() -> Path:
-    """
-    Locate config.json. Priority:
-      1. COMMITGREMLIN_CONFIG environment variable
-      2. config.json in the project root (next to this package)
-      3. config.json in CWD
-    """
+    
+    # Locate config.json. Priority:
+    # 1. COMMITGREMLIN_CONFIG environment variable
+    # 2. config.json in the project root (next to this package)
+    # 3. config.json in CWD
+    
     env = os.environ.get("COMMITGREMLIN_CONFIG")
     if env:
         p = Path(env)
@@ -22,7 +22,7 @@ def _find_config() -> Path:
         raise FileNotFoundError(f"COMMITGREMLIN_CONFIG points to missing file: {env}")
 
     candidates = [
-        Path(__file__).parent.parent / "config.json",  # repo root
+        Path(__file__).parent.parent / "config.json",  # Place/create this file in the repo root, which unless your project folders are like nesting dolls should be simple
         Path.cwd() / "config.json",
     ]
     for c in candidates:
@@ -45,7 +45,7 @@ def load_config() -> dict:
 
 
 def resolve(path: str) -> Path:
-    """Resolve a config path — absolute stays absolute, relative anchors to BASE_DIR."""
+    # Resolve a config path — absolute stays absolute, relative anchors to BASE_DIR.
     p = Path(path)
     return p if p.is_absolute() else BASE_DIR / p
 
