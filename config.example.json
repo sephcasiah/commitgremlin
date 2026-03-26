@@ -1,5 +1,5 @@
 {
-  "_comment": "Paths can be absolute or relative to this config file.",
+  "_comment": "Place this config file with all the py files in /build/lib/commitgremlin OR in the project root.",
   "watch_folders": [
     "C:/dev/MyProject1",
     "C:/dev/MyProject2"
