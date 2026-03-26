@@ -1,7 +1,10 @@
 # Please for the love of peter, mary, and josh rename this file to .gitignore and keep this list intact.
 # You'd think this would be obvious. But reddit constantly blows up with people committing their secrets.
 # Bad vibe-coder! Bad! Don't do that!
-
+# also, it should be noted (since I know someone will see this) that even though no sentisive data sets sent out
+# using this program, I STILL built a .gitignore type thing specifically to make sure that not only
+# does your private stuff not get uploaded but it doesn't even get tracked locally.
+# You should be doing the same.
 
 data/
 config.json
