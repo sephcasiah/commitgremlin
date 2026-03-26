@@ -2,14 +2,17 @@
 name = "commitgremlin"
 version = "0.1.0"
 description = "A daemon that tracks dev activity and pushes daily commits to GitHub."
-author = [{name = "Sephcasiah", email = "sephcasiah@gmail.com"}]
 readme = "README.md"
 requires-python = ">=3.8"
-license = { text = "MIT" }
+license = "MIT"
 
 dependencies = [
     "watchdog>=3.0",
 ]
+
+[[project.authors]]
+name = "Sephcasiah"
+email = "sephcasiah@gmail.com"
 
 [project.optional-dependencies]
 dev = ["pytest"]
