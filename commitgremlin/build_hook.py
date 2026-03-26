@@ -10,7 +10,9 @@ BUILD_FILE = resolve("data") / "builds.json"
 
 
 def increment_build(count: int = 1) -> int:
-    """Increment build count by *count* and return the new total."""
+    # Increment build count by *count* and return the new total. 
+    #I will figure out how to automate this, but until then, 
+    # remember to run the counter per build otherwise feel free to ignore
     data = read_json(BUILD_FILE)
     data.setdefault("builds", 0)
     data["builds"] += count
@@ -19,5 +21,5 @@ def increment_build(count: int = 1) -> int:
 
 
 def current_build() -> int:
-    """Return the current build count without modifying it."""
+    # Returns the current build count - Please note build count may not update local stats until 30 seconds AFTER command is run
     return read_json(BUILD_FILE).get("builds", 0)
