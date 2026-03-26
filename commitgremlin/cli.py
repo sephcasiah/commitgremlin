@@ -18,7 +18,7 @@ def main():
 
     sp.add_parser("start", help="Start the daemon")
 
-    b = sp.add_parser("build", help="Increment the build counter")
+    b = sp.add_parser("build", help="Increment the build counter - build count updates 'status' after 30 seconds")
     b.add_argument("-n", "--number", type=int, default=1, metavar="N",
                    help="Number of builds to add (default: 1)")
 
@@ -46,13 +46,41 @@ def main():
             h, rem = divmod(total_secs, 3600)
             m = rem // 60
             print(f"Days logged:       {data.get('total_days_logged', 0)}")
+            print(f"Current streak:    {data.get('current_streak', 0)} days")
             print(f"Total active time: {h}h {m:02d}m")
             print(f"Files modified:    {data.get('total_files_modified', 0)}")
             print(f"Total builds:      {data.get('total_builds', 0)}")
         else:
             print("No stats yet — start the daemon and let it run for a day.")
 
+    elif args.command == "status":
+        state_file = resolve("data") / "state.json"
+        if state_file.exists():
+            with open(state_file, encoding="utf-8") as f:
+                data = json.load(f)
+            print(f"--- Today's Activity ({data.get('date')}) ---")
+            print(f"Active time:    {data.get('active_time')}")
+            print(f"Files modified: {len(data.get('files_modified', []))}")
+            print(f"Builds:         {data.get('builds')}")
+            print(f"Projects:       {', '.join(data.get('projects', [])) or '\u2014'}")
+        else:
+            print("No active session data found. Is the daemon running?")
+
     elif args.command == "commit":
+        state_file = resolve("data") / "state.json"
+        if state_file.exists():
+            # If daemon is running, we should try to get its latest state
+            # for the commit otherwise this sucker runs a day behind.
+            with open(state_file, encoding="utf-8") as f:
+                data = json.load(f)
+            
+            # Update the CLI's in-memory activity state from the daemon's state
+            tracker.activity.date = data.get("date")
+            tracker.activity.files_modified = set(data.get("files_modified", []))
+            tracker.activity.projects = set(data.get("projects", []))
+            tracker.activity.builds = data.get("builds", 0)
+            tracker.activity._accumulated_seconds = data.get("active_seconds", 0)
+
         tracker.save_log()
         tracker.commit_activity()
         print("Forced commit done.")
