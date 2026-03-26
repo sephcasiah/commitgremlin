@@ -16,10 +16,10 @@ from .utils import load_config, resolve, read_json, write_json
 _cfg = load_config()
 
 WATCH_FOLDERS: list = _cfg["watch_folders"]
-ACTIVITY_REPO: Path = resolve(_cfg["ACTIVITY_REPO"])
+ACTIVITY_REPO: Path = resolve(_cfg["activity_repo"])
 COMMIT_HOUR: int = _cfg.get("commit_hour", 23)
 IGNORED: list = _cfg.get("ignored_patterns", [])
-SESSION_TIMEOUT_SECONDS: int = _cfg.get("session_timeout_seconds", 1800)  # 30 min default
+SESSION_TIMEOUT_SECONDS: int = _cfg.get("session_timeout_seconds", 1800)  # 30 min default, you can change this in config.json
 
 DATA_DIR: Path = resolve("data")
 LOG_DIR: Path = DATA_DIR / "logs"
@@ -75,20 +75,41 @@ class ActivityState:
         m, s = divmod(rem, 60)
         return f"{h}h {m:02d}m {s:02d}s"
 
+    def reset(self):
+        """Reset the state for a new day."""
+        self.date = datetime.date.today().isoformat()
+        self.files_modified = set()
+        self.projects = set()
+        self.builds = 0
+        self._session_start = None
+        self._last_event = None
+        self._accumulated_seconds = 0
+
     def sync_builds(self):
         """Pull the build count written by build_hook so tracker stays in sync."""
         build_file = DATA_DIR / "builds.json"
         data = read_json(build_file)
+        # Only pull if it's a positive number; we'll handle reset ourselves
         self.builds = data.get("builds", 0)
 
     def to_dict(self):
+        # Ensure session is flushed for accurate output in to_dict (used by status)
+        # but don't close it permanently.
+        temp_accumulated = self._accumulated_seconds
+        if self._session_start is not None and self._last_event is not None:
+            temp_accumulated += int(self._last_event - self._session_start)
+
+        h, rem = divmod(temp_accumulated, 3600)
+        m, s = divmod(rem, 60)
+        time_str = f"{h}h {m:02d}m {s:02d}s"
+
         return {
             "date": self.date,
             "files_modified": sorted(self.files_modified),
             "projects": sorted(self.projects),
             "builds": self.builds,
-            "active_seconds": self.active_seconds,
-            "active_time": self.active_time_str,
+            "active_seconds": temp_accumulated,
+            "active_time": time_str,
         }
 
 
@@ -98,6 +119,15 @@ class ChangeHandler(FileSystemEventHandler):
     def on_modified(self, event):
         if event.is_directory:
             return
+        
+        # Check if date has changed before recording event
+        today = datetime.date.today().isoformat()
+        if activity.date != today:
+            # It's a new day! Reset state and builds.json
+            activity.reset()
+            write_json(DATA_DIR / "builds.json", {"builds": 0})
+            save_current_state()
+
         src = Path(event.src_path)
         if any(src.match(pat) for pat in IGNORED):
             return
@@ -109,6 +139,9 @@ class ChangeHandler(FileSystemEventHandler):
         for folder in WATCH_FOLDERS:
             if abs_path.startswith(str(resolve(folder))):
                 activity.projects.add(Path(folder).name)
+        
+        # Periodic save of current state for 'status' command
+        save_current_state()
 
 
 def start_watchers():
@@ -121,6 +154,12 @@ def start_watchers():
             print(f"[CommitGremlin] Warning: watch folder does not exist: {resolved}")
     observer.start()
     return observer
+
+def save_current_state():
+    """Save the in-memory state for the CLI 'status' command to read."""
+    activity.sync_builds()
+    state_file = DATA_DIR / "state.json"
+    write_json(state_file, activity.to_dict())
 
 def save_log():
     activity.close_session()
@@ -137,9 +176,9 @@ def save_log():
 def _save_log_md():
     path = LOG_DIR / f"{activity.date}.md"
     lines = [
-        f"# CommitGremlin — {activity.date}\n\n",
+        f"# CommitGremlin \u2014 {activity.date}\n\n",
         f"**Active time:** {activity.active_time_str}  \n",
-        f"**Projects:** {', '.join(sorted(activity.projects)) or '—'}  \n",
+        f"**Projects:** {', '.join(sorted(activity.projects)) or '\u2014'}  \n",
         f"**Builds:** {activity.builds}  \n",
         f"**Files modified:** {len(activity.files_modified)}  \n\n",
     ]
@@ -151,15 +190,42 @@ def _save_log_md():
 
 def _update_stats():
     stats = read_json(STATS_FILE)
-    stats.setdefault("total_days_logged", 0)
-    stats.setdefault("total_files_modified", 0)
-    stats.setdefault("total_builds", 0)
-    stats.setdefault("total_active_seconds", 0)
+    
+    # daily_records maps date -> {files, builds, seconds}
+    # note: I couldn't really think of anything else to really keep track of here. I'm not trying to make an impact,
+    # I'm just trying to keep track of my stuff off-line
+    records = stats.setdefault("daily_records", {})
+    records[activity.date] = {
+        "files": len(activity.files_modified),
+        "builds": activity.builds,
+        "seconds": activity.active_seconds
+    }
 
-    stats["total_days_logged"] += 1
-    stats["total_files_modified"] += len(activity.files_modified)
-    stats["total_builds"] += activity.builds
-    stats["total_active_seconds"] += activity.active_seconds
+    # Math
+    stats["total_days_logged"] = len(records)
+    stats["total_files_modified"] = sum(r["files"] for r in records.values())
+    stats["total_builds"] = sum(r["builds"] for r in records.values())
+    stats["total_active_seconds"] = sum(r["seconds"] for r in records.values())
+
+    # More math
+    sorted_dates = sorted(records.keys(), reverse=True)
+    streak = 0
+    if sorted_dates:
+        import datetime as dt
+        expected = dt.date.fromisoformat(sorted_dates[0])
+        # If the latest record is not today or yesterday, streak is 0
+        # (Actually, if it's currently 'today', the latest record IS today)
+        # You'd think this would go without saying. You'd be wrong
+        today_dt = dt.date.today()
+        if expected == today_dt or expected == today_dt - dt.timedelta(days=1):
+            for date_str in sorted_dates:
+                actual = dt.date.fromisoformat(date_str)
+                if actual == expected:
+                    streak += 1
+                    expected -= dt.timedelta(days=1)
+                else:
+                    break
+    stats["current_streak"] = streak
 
     write_json(STATS_FILE, stats)
 
@@ -172,10 +238,10 @@ def _update_readme():
     tm = tr // 60
     total_active_str = f"{th}h {tm:02d}m"
 
-    lines = [
+    lines = [ #please remember to change the links here - this is the default layout for your local README.md that will be committed.
         "# CommitGremlin activity\n\n",
-        "> Auto-generated by [CommitGremlin](https://github.com/sephcasiah/commitgremlin) "
-        "— a dev activity tracker (honest green square machine).\n\n",
+        "> Auto-generated by [CommitGremlin](https://github.com/{YOURID}/commitgremlin) "
+        "\u2014 a dev activity tracker (honest green square machine).\n\n",
         "## Today\n\n",
         "| Metric | Value |\n",
         "|--------|-------|\n",
@@ -183,11 +249,12 @@ def _update_readme():
         f"| Active time | {activity.active_time_str} |\n",
         f"| Files modified | {len(activity.files_modified)} |\n",
         f"| Builds | {activity.builds} |\n",
-        f"| Projects | {', '.join(sorted(activity.projects)) or '—'} |\n\n",
+        f"| Projects | {', '.join(sorted(activity.projects)) or '\u2014'} |\n\n",
         "## All time\n\n",
         "| Metric | Value |\n",
         "|--------|-------|\n",
         f"| Days logged | {stats.get('total_days_logged', 0)} |\n",
+        f"| Current streak | {stats.get('current_streak', 0)} days |\n", # see I added a streak, because why not?
         f"| Total active time | {total_active_str} |\n",
         f"| Total files modified | {stats.get('total_files_modified', 0)} |\n",
         f"| Total builds | {stats.get('total_builds', 0)} |\n",
@@ -199,6 +266,11 @@ def _update_readme():
 
 def commit_activity():
     repo = str(ACTIVITY_REPO)
+    # Ensure repo exists and is a git repo
+    if not (ACTIVITY_REPO / ".git").exists():
+        print(f"[CommitGremlin] Error: {repo} is not a git repository.")
+        return
+
     subprocess.run(["git", "-C", repo, "add", "."], check=True)
     msg = (
         f"activity {activity.date} | "
@@ -206,25 +278,50 @@ def commit_activity():
         f"files: {len(activity.files_modified)} | "
         f"builds: {activity.builds}"
     )
-    result = subprocess.run(["git", "-C", repo, "commit", "-m", msg])
+    result = subprocess.run(["git", "-C", repo, "commit", "-m", msg], capture_output=True)
     if result.returncode == 0:
         subprocess.run(["git", "-C", repo, "push"], check=True)
+        print(f"[CommitGremlin] Committed and pushed for {activity.date}")
     else:
         print("[CommitGremlin] Nothing to commit today.")
 
 def main():
     observer = start_watchers()
     print(f"[CommitGremlin] Watching {len(WATCH_FOLDERS)} folder(s). Commit at {COMMIT_HOUR:02d}:00.")
+    
+    # use this to ensure you only commit once per day
+    last_commit_date = None
+    
     try:
         while True:
             now = datetime.datetime.now()
-            if now.hour == COMMIT_HOUR and now.minute == 0:
+            today = now.date().isoformat()
+            
+            # 1. Midnight reset: Check if calendar date has rolled over
+            if activity.date != today:
+                # Final save of yesterday's stats/logs
+                save_log()
+                print(f"[CommitGremlin] Day changed to {today}. Resetting tracker.")
+                
+                # Reset for the new day
+                activity.reset()
+                # Also resets the physical builds file
+                write_json(DATA_DIR / "builds.json", {"builds": 0})
+                save_current_state()
+
+            # 2. Commit hour: Trigger the daily save/commit to GitHub
+            if now.hour == COMMIT_HOUR and last_commit_date != today:
                 save_log()
                 commit_activity()
-                time.sleep(3600)  # skip the rest of this hour
+                last_commit_date = today
+            
+            # Periodically save state even if no events ideally this would not interfer with the daemon watching your dev files after timeout,
+            # but I'm hoping this will keep memory free if you're just idling with your PC open (why?)
+            save_current_state()
             time.sleep(30)
     except KeyboardInterrupt:
         print("\n[CommitGremlin] Shutting down...")
     finally:
         observer.stop()
         observer.join()
+
